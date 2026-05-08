@@ -14,7 +14,7 @@ final class SnapshotFormattingTests: XCTestCase {
             sourceDescription: "test"
         )
 
-        XCTAssertEqual(SnapshotFormatting.menuTitle(for: snapshot), "89% 3:00 PM")
+        XCTAssertEqual(SnapshotFormatting.menuTitle(for: snapshot), "89%")
     }
 
     func testUnknownMenuTitleWhenNoBuckets() {

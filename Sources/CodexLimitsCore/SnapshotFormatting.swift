@@ -11,10 +11,7 @@ public enum SnapshotFormatting {
         }
 
         let percent = Int((bucket.remainingPercent ?? 0).rounded())
-        if bucket.window == .fiveHour, let reset = resetText(for: bucket) {
-            return "\(percent)% \(reset)"
-        }
-        return "\(percent)% \(bucket.window.displayName)"
+        return "\(percent)%"
     }
 
     public static func resetText(for bucket: RateLimitBucket) -> String? {
