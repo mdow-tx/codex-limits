@@ -1,7 +1,7 @@
 import CodexLimitsCore
 import Charts
 import SwiftUI
-import UserNotifications
+@preconcurrency import UserNotifications
 
 @main
 struct CodexLimitsMenuBarApp: App {
