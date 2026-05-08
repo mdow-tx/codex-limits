@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+.swiftpm/
+dist/
+*.xcuserstate
+*.swp
+*.zip
+
+# Local runtime state is written under ~/Library/Application Support/Codex Limits.
+# Do not commit copied snapshots, history, or auth material.
+snapshot.json
+history.json
+auth.json
