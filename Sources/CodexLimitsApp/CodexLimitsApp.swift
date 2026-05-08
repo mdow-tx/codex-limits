@@ -1,4 +1,5 @@
 import CodexLimitsCore
+import AppKit
 import Charts
 import SwiftUI
 @preconcurrency import UserNotifications
@@ -8,14 +9,40 @@ struct CodexLimitsMenuBarApp: App {
     @StateObject private var model = MenuBarModel()
 
     var body: some Scene {
-        MenuBarExtra(SnapshotFormatting.menuTitle(for: model.snapshot)) {
+        MenuBarExtra {
             LimitsPanel(model: model)
                 .task {
                     await model.refresh()
                     model.startTimer()
                 }
+        } label: {
+            Label {
+                Text(model.menuTitle)
+            } icon: {
+                Image(systemName: "speedometer")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(model.menuIconColor, .secondary)
+            }
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+enum RefreshInterval: Int, CaseIterable, Identifiable {
+    case one = 60
+    case five = 300
+    case ten = 600
+    case fifteen = 900
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .one: "1 min"
+        case .five: "5 min"
+        case .ten: "10 min"
+        case .fifteen: "15 min"
+        }
     }
 }
 
@@ -26,23 +53,27 @@ final class MenuBarModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var isRefreshing = false
     @Published var notificationsEnabled: Bool
+    @Published var refreshInterval: RefreshInterval
 
     private let chain = ProviderChain()
     private let store = SnapshotStore()
     private let historyStore = SnapshotHistoryStore()
     private let notifier = LimitNotifier()
     private let notificationsKey = "notificationsEnabled"
+    private let refreshIntervalKey = "refreshIntervalSeconds"
     private var timer: Timer?
 
     init() {
         snapshot = try? store.load()
         history = (try? historyStore.load()) ?? []
         notificationsEnabled = UserDefaults.standard.bool(forKey: notificationsKey)
+        let savedInterval = UserDefaults.standard.integer(forKey: refreshIntervalKey)
+        refreshInterval = RefreshInterval(rawValue: savedInterval) ?? .five
     }
 
     func startTimer() {
-        guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: TimeInterval(refreshInterval.rawValue), repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.refresh()
             }
@@ -69,6 +100,12 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
+    func setRefreshInterval(_ interval: RefreshInterval) {
+        refreshInterval = interval
+        UserDefaults.standard.set(interval.rawValue, forKey: refreshIntervalKey)
+        startTimer()
+    }
+
     func setNotificationsEnabled(_ isEnabled: Bool) {
         notificationsEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: notificationsKey)
@@ -79,8 +116,84 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
+    var menuTitle: String {
+        SnapshotFormatting.menuTitle(for: snapshot)
+    }
+
+    var isStale: Bool {
+        guard let snapshot else { return false }
+        return Date().timeIntervalSince(snapshot.lastUpdated) > 30 * 60
+    }
+
+    var menuIconColor: Color {
+        guard !isStale else { return .secondary }
+        guard let remaining = snapshot?.buckets.compactMap(\.remainingPercent).min() else {
+            return .secondary
+        }
+        if remaining <= 10 { return .red }
+        if remaining <= 25 { return .orange }
+        return .green
+    }
+
+    var versionText: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        return "v\(version ?? "dev")"
+    }
+
+    var sanitizedError: String? {
+        errorMessage.map(Self.sanitize)
+    }
+
+    var needsCodexSignIn: Bool {
+        guard snapshot == nil, let errorMessage else { return false }
+        return errorMessage.contains("auth.json")
+            || errorMessage.localizedCaseInsensitiveContains("access token")
+            || errorMessage.localizedCaseInsensitiveContains("auth file")
+    }
+
+    func copyDiagnostics() {
+        let text = diagnosticsText()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    func diagnosticsText() -> String {
+        var lines: [String] = [
+            "Codex Limits \(versionText)",
+            "Last refresh: \(snapshot?.lastUpdated.formatted(date: .abbreviated, time: .standard) ?? "never")",
+            "Refresh interval: \(refreshInterval.label)",
+            "Notifications enabled: \(notificationsEnabled ? "yes" : "no")"
+        ]
+        if isStale {
+            lines.append("Status: stale")
+        }
+        if let error = sanitizedError {
+            lines.append("Last error: \(error)")
+        }
+        if let snapshot {
+            lines.append("Limits:")
+            for bucket in snapshot.buckets.sorted(by: { $0.id < $1.id }) {
+                let remaining = bucket.remainingPercent.map { "\(Int($0.rounded()))%" } ?? "unknown"
+                let reset = SnapshotFormatting.resetText(for: bucket) ?? "unknown"
+                lines.append("- \(bucket.group.displayName) \(bucket.window.displayName): \(remaining) left, resets \(reset)")
+            }
+            if let credit = snapshot.credit {
+                let balance = credit.balance.map { String(Int($0.rounded())) } ?? "unknown"
+                lines.append("Credit: \(credit.unlimited ? "unlimited" : balance)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     func quit() {
         NSApplication.shared.terminate(nil)
+    }
+
+    private static func sanitize(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: NSHomeDirectory(),
+            with: "~"
+        )
     }
 }
 
@@ -93,6 +206,12 @@ struct LimitsPanel: View {
 
             if let snapshot = model.snapshot {
                 VStack(alignment: .leading, spacing: 12) {
+                    if model.isStale {
+                        Label("Last successful refresh is stale", systemImage: "clock.badge.exclamationmark")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     ForEach(RateLimitGroup.allCases, id: \.self) { group in
                         let rows = snapshot.buckets.filter { $0.group == group }
                         if !rows.isEmpty {
@@ -112,13 +231,32 @@ struct LimitsPanel: View {
                     )) {
                         Label("Low-limit notifications", systemImage: "bell")
                     }
+
+                    Picker("Refresh", selection: Binding(
+                        get: { model.refreshInterval },
+                        set: { model.setRefreshInterval($0) }
+                    )) {
+                        ForEach(RefreshInterval.allCases) { interval in
+                            Text(interval.label).tag(interval)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                 }
             } else {
-                ContentUnavailableView("No Codex usage data yet", systemImage: "speedometer")
+                if model.needsCodexSignIn {
+                    ContentUnavailableView(
+                        "Sign in to Codex first",
+                        systemImage: "person.crop.circle.badge.exclamationmark",
+                        description: Text("Open Codex, sign in, then refresh this menu.")
+                    )
                     .frame(maxWidth: .infinity)
+                } else {
+                    ContentUnavailableView("No Codex usage data yet", systemImage: "speedometer")
+                        .frame(maxWidth: .infinity)
+                }
             }
 
-            if let error = model.errorMessage {
+            if let error = model.sanitizedError {
                 Divider()
                 VStack(alignment: .leading, spacing: 4) {
                     Label("Refresh failed", systemImage: "exclamationmark.triangle")
@@ -141,8 +279,13 @@ struct LimitsPanel: View {
             Image(systemName: "speedometer")
                 .font(.title2)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Codex Limits")
-                    .font(.headline)
+                HStack(spacing: 6) {
+                    Text("Codex Limits")
+                        .font(.headline)
+                    Text(model.versionText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Text(statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -163,6 +306,11 @@ struct LimitsPanel: View {
         VStack(spacing: 10) {
             Divider()
             HStack {
+                Button {
+                    model.copyDiagnostics()
+                } label: {
+                    Label("Copy Debug Info", systemImage: "doc.on.doc")
+                }
                 Spacer()
                 Button("Quit") {
                     model.quit()
@@ -173,7 +321,8 @@ struct LimitsPanel: View {
 
     private var statusText: String {
         if let snapshot = model.snapshot {
-            return "Updated \(snapshot.lastUpdated.formatted(date: .omitted, time: .shortened))"
+            let prefix = model.isStale ? "Stale" : "Updated"
+            return "\(prefix) \(snapshot.lastUpdated.formatted(date: .omitted, time: .shortened))"
         }
         return model.isRefreshing ? "Refreshing..." : "Waiting for first refresh"
     }
@@ -297,11 +446,11 @@ struct LimitBucketRow: View {
         guard historyPoints.count >= 2,
               let first = historyPoints.dropLast().last?.remainingPercent,
               let latest = historyPoints.last?.remainingPercent else {
-            return "Trend after 6 refreshes"
+            return ""
         }
         let delta = latest - first
         if abs(delta) < 0.5 {
-            return "No change"
+            return ""
         }
         let sign = delta > 0 ? "+" : ""
         return "\(sign)\(Int(delta.rounded()))% since last refresh"

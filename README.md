@@ -8,8 +8,10 @@ It reads the local Codex auth file, calls Codex's structured usage endpoint, and
 - 5-hour and weekly remaining percentages
 - reset times
 - credit status
+- configurable refresh interval
 - local trend history with hoverable time-series charts
 - optional low-limit notifications
+- copyable debug diagnostics with no tokens or credentials
 
 The app does not use screenshots, OCR, or screen recording.
 
@@ -50,6 +52,19 @@ open ".build/Codex Limits.app"
 ```
 
 The menu bar app refreshes on launch, every 5 minutes, and whenever you click Refresh.
+
+To launch Codex Limits automatically, add it in System Settings:
+
+```text
+System Settings -> General -> Login Items -> Add Codex Limits.app
+```
+
+## App Controls
+
+- Refresh: manually refreshes usage.
+- Refresh interval: choose 1, 5, 10, or 15 minutes.
+- Low-limit notifications: off by default; when enabled, alerts below 25%, 10%, and 5%.
+- Copy Debug Info: copies version, refresh status, sanitized errors, and current limits. It does not include tokens or credentials.
 
 ## Package
 
