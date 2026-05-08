@@ -85,6 +85,8 @@ iconutil -c icns "$ICONSET" -o "$ICNS"
   || /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string Codex Limits" "$CONTENTS/Info.plist"
 
 xattr -cr "$APP_DIR"
+xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
+xattr -d "com.apple.fileprovider.fpfs#P" "$APP_DIR" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_DIR"
 ditto -c -k --keepParent "$APP_DIR" "$ZIP"
 

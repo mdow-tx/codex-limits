@@ -9,20 +9,12 @@ struct CodexLimitsMenuBarApp: App {
     @StateObject private var model = MenuBarModel()
 
     var body: some Scene {
-        MenuBarExtra {
+        MenuBarExtra(model.menuTitle) {
             LimitsPanel(model: model)
                 .task {
                     await model.refresh()
                     model.startTimer()
                 }
-        } label: {
-            Label {
-                Text(model.menuTitle)
-            } icon: {
-                Image(systemName: "speedometer")
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(model.menuIconColor, .secondary)
-            }
         }
         .menuBarExtraStyle(.window)
     }
@@ -123,16 +115,6 @@ final class MenuBarModel: ObservableObject {
     var isStale: Bool {
         guard let snapshot else { return false }
         return Date().timeIntervalSince(snapshot.lastUpdated) > 30 * 60
-    }
-
-    var menuIconColor: Color {
-        guard !isStale else { return .secondary }
-        guard let remaining = snapshot?.buckets.compactMap(\.remainingPercent).min() else {
-            return .secondary
-        }
-        if remaining <= 10 { return .red }
-        if remaining <= 25 { return .orange }
-        return .green
     }
 
     var versionText: String {
