@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag, for example v1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test
+        run: swift test
+
+      - name: Package app
+        run: ./scripts/package-local.sh
+
+      - name: Rename release asset
+        run: |
+          cp "dist/Codex Limits.zip" "dist/Codex-Limits-${{ steps.version.outputs.tag }}.zip"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Codex Limits ${{ steps.version.outputs.tag }}
+          body: |
+            Download the zip, unzip it, and move `Codex Limits.app` to Applications.
+
+            This build is ad hoc signed for local use. Until Developer ID signing and notarization are configured, macOS may require right-clicking the app and choosing Open the first time.
+          files: dist/Codex-Limits-${{ steps.version.outputs.tag }}.zip

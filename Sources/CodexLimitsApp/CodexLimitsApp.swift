@@ -25,16 +25,19 @@ final class MenuBarModel: ObservableObject {
     @Published var history: [RateLimitSnapshot] = []
     @Published var errorMessage: String?
     @Published var isRefreshing = false
+    @Published var notificationsEnabled: Bool
 
     private let chain = ProviderChain()
     private let store = SnapshotStore()
     private let historyStore = SnapshotHistoryStore()
     private let notifier = LimitNotifier()
+    private let notificationsKey = "notificationsEnabled"
     private var timer: Timer?
 
     init() {
         snapshot = try? store.load()
         history = (try? historyStore.load()) ?? []
+        notificationsEnabled = UserDefaults.standard.bool(forKey: notificationsKey)
     }
 
     func startTimer() {
@@ -55,11 +58,23 @@ final class MenuBarModel: ObservableObject {
             try? historyStore.append(next)
             history = (try? historyStore.load()) ?? [next]
             errorMessage = nil
-            await notifier.sendNotificationsIfNeeded(for: next)
+            if notificationsEnabled {
+                await notifier.sendNotificationsIfNeeded(for: next)
+            }
         } catch {
             errorMessage = error.localizedDescription
             if snapshot == nil {
                 snapshot = try? store.load()
+            }
+        }
+    }
+
+    func setNotificationsEnabled(_ isEnabled: Bool) {
+        notificationsEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: notificationsKey)
+        if isEnabled {
+            Task {
+                _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
             }
         }
     }
@@ -89,6 +104,13 @@ struct LimitsPanel: View {
                         Divider()
                         Label(creditText(credit), systemImage: "creditcard")
                             .foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    Toggle(isOn: Binding(
+                        get: { model.notificationsEnabled },
+                        set: { model.setNotificationsEnabled($0) }
+                    )) {
+                        Label("Low-limit notifications", systemImage: "bell")
                     }
                 }
             } else {
@@ -394,7 +416,6 @@ actor LimitNotifier {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
-            _ = try? await center.requestAuthorization(options: [.alert, .sound])
             return
         }
 
