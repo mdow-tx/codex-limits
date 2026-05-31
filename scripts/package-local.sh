@@ -29,7 +29,7 @@ import zlib
 import sys
 
 out = Path(sys.argv[1])
-sizes = [16, 32, 64, 128, 256, 512, 1024]
+sizes = [16, 32, 128, 256, 512]
 
 def png_rgba(path, width, height, pixels):
     raw = b''.join(b'\x00' + pixels[y * width * 4:(y + 1) * width * 4] for y in range(height))
@@ -74,9 +74,12 @@ for size in sizes:
         png_rgba(out / f"icon_{size}x{size}@2x.png", double_size, double_size, draw(double_size))
 PY
 
-iconutil -c icns "$ICONSET" -o "$ICNS"
-/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$CONTENTS/Info.plist" 2>/dev/null \
-  || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$CONTENTS/Info.plist"
+if iconutil -c icns "$ICONSET" -o "$ICNS"; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$CONTENTS/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$CONTENTS/Info.plist"
+else
+  echo "warning: could not generate AppIcon.icns; packaging without a custom icon" >&2
+fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleName Codex Limits" "$CONTENTS/Info.plist" 2>/dev/null \
   || /usr/libexec/PlistBuddy -c "Add :CFBundleName string Codex Limits" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundlePackageType APPL" "$CONTENTS/Info.plist" 2>/dev/null \

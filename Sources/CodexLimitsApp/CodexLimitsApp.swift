@@ -425,17 +425,25 @@ struct LimitBucketRow: View {
     }
 
     private var deltaText: String {
-        guard historyPoints.count >= 2,
-              let first = historyPoints.dropLast().last?.remainingPercent,
-              let latest = historyPoints.last?.remainingPercent else {
+        let orderedPoints = historyPoints.sorted { $0.date < $1.date }
+        guard let latest = orderedPoints.last else {
             return ""
         }
-        let delta = latest - first
+
+        let oneHourAgo = latest.date.addingTimeInterval(-60 * 60)
+        guard let baseline = orderedPoints
+            .dropLast()
+            .filter({ $0.date <= oneHourAgo })
+            .last else {
+            return ""
+        }
+
+        let delta = latest.remainingPercent - baseline.remainingPercent
         if abs(delta) < 0.5 {
             return ""
         }
         let sign = delta > 0 ? "+" : ""
-        return "\(sign)\(Int(delta.rounded()))% since last refresh"
+        return "\(sign)\(Int(delta.rounded()))% in the last hour"
     }
 
     private var color: Color {
