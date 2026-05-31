@@ -1,5 +1,7 @@
 import AppKit
+import CryptoKit
 import Foundation
+import Security
 
 public protocol CodexUsageProvider: Sendable {
     var name: String { get }
@@ -44,20 +46,20 @@ public struct ProviderChain: Sendable {
 
 public struct CodexStructuredProvider: CodexUsageProvider {
     public let name = "Codex structured fetch"
-    public let authURL: URL
+    public let codexHome: URL
     public let endpoint: URL
 
     public init(
-        authURL: URL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/auth.json"),
+        codexHome: URL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex", isDirectory: true),
         endpoint: URL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
     ) {
-        self.authURL = authURL
+        self.codexHome = codexHome
         self.endpoint = endpoint
     }
 
     public func fetchSnapshot() async throws -> RateLimitSnapshot {
-        let auth = try CodexAuthFile.load(from: authURL)
+        let auth = try CodexAuth.load(codexHome: codexHome)
         guard auth.authMode == "chatgpt" else {
             throw CodexUsageError.unavailable("Codex auth mode '\(auth.authMode ?? "unknown")' is not supported by the ChatGPT usage endpoint yet.")
         }
@@ -90,7 +92,7 @@ public struct CodexStructuredProvider: CodexUsageProvider {
     }
 }
 
-private struct CodexAuthFile: Decodable {
+struct CodexAuth: Decodable {
     let authMode: String?
     let tokens: Tokens?
 
@@ -99,13 +101,50 @@ private struct CodexAuthFile: Decodable {
         case tokens
     }
 
-    static func load(from url: URL) throws -> Self {
+    static func load(codexHome: URL) throws -> Self {
+        let fileURL = codexHome.appendingPathComponent("auth.json")
+        if let keychainAuth = try? loadFromKeychain(codexHome: codexHome) {
+            return keychainAuth
+        }
+        return try loadFromFile(fileURL)
+    }
+
+    static func loadFromFile(_ url: URL) throws -> Self {
         do {
             let data = try Data(contentsOf: url)
             return try JSONDecoder().decode(Self.self, from: data)
         } catch {
             throw CodexUsageError.unavailable("Could not read Codex auth at \(url.path): \(error.localizedDescription)")
         }
+    }
+
+    static func loadFromKeychain(codexHome: URL) throws -> Self {
+        let account = try CodexAuthStoreKey.account(for: codexHome)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "Codex Auth",
+            kSecAttrAccount as String: account,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnData as String: true
+        ]
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess else {
+            throw CodexUsageError.unavailable("Could not read Codex auth from Keychain account \(account): \(Self.securityMessage(status))")
+        }
+        guard let data = result as? Data else {
+            throw CodexUsageError.unavailable("Codex Keychain auth entry did not contain data.")
+        }
+        do {
+            return try JSONDecoder().decode(Self.self, from: data)
+        } catch {
+            throw CodexUsageError.unavailable("Could not decode Codex Keychain auth: \(error.localizedDescription)")
+        }
+    }
+
+    private static func securityMessage(_ status: OSStatus) -> String {
+        SecCopyErrorMessageString(status, nil) as String? ?? "OSStatus \(status)"
     }
 
     struct Tokens: Decodable {
@@ -116,6 +155,28 @@ private struct CodexAuthFile: Decodable {
             case accessToken = "access_token"
             case accountID = "account_id"
         }
+    }
+}
+
+enum CodexAuthStoreKey {
+    static func account(for codexHome: URL) throws -> String {
+        let canonicalPath = canonicalPath(for: codexHome)
+        let digest = SHA256.hash(data: Data(canonicalPath.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let prefix = String(digest.prefix(16))
+        return "cli|\(prefix)"
+    }
+
+    private static func canonicalPath(for url: URL) -> String {
+        let path = url.path
+        if FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+                .resolvingSymlinksInPath()
+                .standardizedFileURL
+                .path
+        }
+        return url.path
     }
 }
 

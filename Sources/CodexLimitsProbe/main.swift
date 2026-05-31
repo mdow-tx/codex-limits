@@ -13,7 +13,7 @@ struct CodexLimitsProbe {
         } catch {
             let payload = [
                 "error": error.localizedDescription,
-                "hint": "The live provider reads ~/.codex/auth.json and calls Codex's structured usage endpoint. It does not use screenshots, OCR, or Accessibility by default."
+                "hint": "The live provider reads Codex auth from Keychain or ~/.codex/auth.json and calls Codex's structured usage endpoint. It does not use screenshots, OCR, or Accessibility by default."
             ]
             let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
             FileHandle.standardOutput.write(data ?? Data("{}".utf8))

@@ -2,7 +2,7 @@
 
 Codex Limits is a small native macOS menu bar utility for watching Codex usage limits.
 
-It reads the local Codex auth file, calls Codex's structured usage endpoint, and shows:
+It reads local Codex auth from Keychain or `~/.codex/auth.json`, calls Codex's structured usage endpoint, and shows:
 
 - the lowest active limit in the menu bar
 - 5-hour and weekly remaining percentages
@@ -18,7 +18,7 @@ The app does not use screenshots, OCR, or screen recording.
 ## Requirements
 
 - macOS 14 or newer
-- A signed-in Codex installation with `~/.codex/auth.json`
+- A signed-in Codex installation
 
 Xcode command line tools are only required if you build from source. They are not required when installing a prebuilt release app.
 
@@ -88,7 +88,7 @@ Local and GitHub release builds are ad hoc signed, so users may need to right-cl
 
 ## Privacy
 
-Codex Limits reads `~/.codex/auth.json` to make the same structured usage request that Codex uses. It does not store tokens or credentials. It only stores parsed, non-secret usage snapshots and local history under:
+Codex Limits reads Codex auth from Keychain when available, falling back to `~/.codex/auth.json`, to make the same structured usage request that Codex uses. It does not store tokens or credentials. It only stores parsed, non-secret usage snapshots and local history under:
 
 ```text
 ~/Library/Application Support/Codex Limits/
