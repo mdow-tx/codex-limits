@@ -51,6 +51,31 @@ final class UsagePayloadParserTests: XCTestCase {
         XCTAssertEqual(snapshot.buckets[0].window, .fiveHour)
     }
 
+    func testParsesCodexRateLimitsEventPayload() throws {
+        let payload = """
+        {
+          "type": "codex.rate_limits",
+          "metered_limit_name": "codex",
+          "rate_limits": {
+            "primary": {"used_percent": 12.5, "window_minutes": 300, "reset_at": 1770000000},
+            "secondary": {"used_percent": 40, "window_minutes": 10080, "reset_at": 1770500000}
+          },
+          "credits": {"has_credits": true, "unlimited": false, "balance": "9"}
+        }
+        """
+        let snapshot = try UsagePayloadParser.parse(
+            data: Data(payload.utf8),
+            sourceStatus: .cachedStructured,
+            sourceDescription: "event"
+        )
+
+        XCTAssertEqual(snapshot.buckets.count, 2)
+        XCTAssertEqual(snapshot.buckets.first { $0.window == .fiveHour }?.remainingPercent, 87.5)
+        XCTAssertEqual(snapshot.buckets.first { $0.window == .weekly }?.windowDurationMins, 10080)
+        XCTAssertEqual(snapshot.credit?.balance, 9)
+        XCTAssertEqual(snapshot.credit?.available, true)
+    }
+
     func testMalformedPayloadFails() {
         XCTAssertThrowsError(try UsagePayloadParser.parse(
             data: Data(#"{"hello":"world"}"#.utf8),

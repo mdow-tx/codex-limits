@@ -10,6 +10,10 @@ public enum UsagePayloadParser {
     }
 
     public static func parse(json: Any, sourceStatus: SourceStatus, sourceDescription: String) -> RateLimitSnapshot? {
+        if let eventSnapshot = parseRateLimitEventPayload(json, sourceStatus: sourceStatus, sourceDescription: sourceDescription) {
+            return eventSnapshot
+        }
+
         if let backendSnapshot = parseBackendUsagePayload(json, sourceStatus: sourceStatus, sourceDescription: sourceDescription) {
             return backendSnapshot
         }
@@ -56,6 +60,58 @@ public enum UsagePayloadParser {
             sourceStatus: sourceStatus,
             sourceDescription: sourceDescription
         )
+    }
+
+    private static func parseRateLimitEventPayload(_ json: Any, sourceStatus: SourceStatus, sourceDescription: String) -> RateLimitSnapshot? {
+        guard let object = json as? [String: Any],
+              string(in: object, keys: ["type"]) == "codex.rate_limits" else {
+            return nil
+        }
+
+        let rawLimitName = string(in: object, keys: ["metered_limit_name", "meteredLimitName", "limit_name", "limitName"])
+        let group: RateLimitGroup = rawLimitName == RateLimitGroup.spark.rawValue ? .spark : .general
+        guard let details = unboxObject(object["rate_limits"] ?? object["rateLimits"]) else {
+            return nil
+        }
+
+        var buckets: [RateLimitBucket] = []
+        if let primary = unboxObject(details["primary"]) {
+            buckets.append(eventBucket(from: primary, group: group, window: .fiveHour))
+        }
+        if let secondary = unboxObject(details["secondary"]) {
+            buckets.append(eventBucket(from: secondary, group: group, window: .weekly))
+        }
+
+        guard !buckets.isEmpty else { return nil }
+        return RateLimitSnapshot(
+            buckets: deduplicated(buckets).sorted { $0.id < $1.id },
+            credit: eventCredit(from: object["credits"] ?? object["credit"]),
+            lastUpdated: Date(),
+            sourceStatus: sourceStatus,
+            sourceDescription: sourceDescription
+        )
+    }
+
+    private static func eventBucket(from windowObject: [String: Any], group: RateLimitGroup, window: RateLimitWindow) -> RateLimitBucket {
+        let used = double(in: windowObject, keys: ["used_percent", "usedPercent"])
+        return RateLimitBucket(
+            group: group,
+            window: window,
+            label: window == .fiveHour ? "5 hour usage limit" : "Weekly usage limit",
+            remainingPercent: used.map { max(0, min(100, 100 - $0)) },
+            usedPercent: used,
+            resetAt: date(from: windowObject["reset_at"] ?? windowObject["resetAt"]),
+            resetLabel: nil,
+            windowDurationMins: int(in: windowObject, keys: ["window_minutes", "windowMinutes"])
+        )
+    }
+
+    private static func eventCredit(from value: Any?) -> CreditStatus? {
+        guard let details = unboxObject(value) else { return nil }
+        let balance = double(in: details, keys: ["balance"])
+        let unlimited = bool(in: details, keys: ["unlimited"]) ?? false
+        let hasCredits = bool(in: details, keys: ["has_credits", "hasCredits"]) ?? (balance != nil || unlimited)
+        return CreditStatus(balance: balance, unlimited: unlimited, available: hasCredits || unlimited || balance != nil)
     }
 
     private static func parseBackendUsagePayload(_ json: Any, sourceStatus: SourceStatus, sourceDescription: String) -> RateLimitSnapshot? {
