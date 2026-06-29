@@ -153,6 +153,16 @@ final class MenuBarModel: ObservableObject {
             lines.append("Last error: \(error)")
         }
         if let snapshot {
+            if let planType = snapshot.planType {
+                lines.append("Plan: \(planType)")
+            }
+            if let rateLimitReachedType = snapshot.rateLimitReachedType {
+                lines.append("Rate limit reached type: \(rateLimitReachedType)")
+            }
+            if let spendControl = snapshot.spendControl {
+                let remaining = spendControl.remainingPercent.map { "\(Int($0.rounded()))%" } ?? "unknown"
+                lines.append("Spend control: \(remaining) remaining")
+            }
             lines.append("Limits:")
             for bucket in snapshot.buckets.sorted(by: { $0.id < $1.id }) {
                 let remaining = bucket.remainingPercent.map { "\(Int($0.rounded()))%" } ?? "unknown"
@@ -194,7 +204,7 @@ struct LimitsPanel: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    ForEach(RateLimitGroup.allCases, id: \.self) { group in
+                    ForEach(groups(in: snapshot), id: \.self) { group in
                         let rows = snapshot.buckets.filter { $0.group == group }
                         if !rows.isEmpty {
                             LimitGroupSection(group: group, buckets: rows, history: model.history)
@@ -317,6 +327,11 @@ struct LimitsPanel: View {
             return "Credit: \(Int(balance.rounded())) remaining"
         }
         return credit.available ? "Credit: available" : "Credit: unavailable"
+    }
+
+    private func groups(in snapshot: RateLimitSnapshot) -> [RateLimitGroup] {
+        Array(Set(snapshot.buckets.map(\.group)))
+            .sorted { $0.sortKey.localizedStandardCompare($1.sortKey) == .orderedAscending }
     }
 }
 

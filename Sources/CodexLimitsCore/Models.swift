@@ -1,14 +1,43 @@
 import Foundation
 
-public enum RateLimitGroup: String, Codable, CaseIterable, Sendable {
-    case general
-    case spark = "gpt-5.3-codex-spark"
+public struct RateLimitGroup: RawRepresentable, Codable, Hashable, Sendable {
+    public let rawValue: String
+
+    public init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        rawValue = try container.decode(String.self)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    public static let general = RateLimitGroup(rawValue: "general")
+    public static let spark = RateLimitGroup(rawValue: "gpt-5.3-codex-spark")
 
     public var displayName: String {
-        switch self {
-        case .general: "General"
-        case .spark: "GPT-5.3-Codex-Spark"
+        if self == .general { return "General" }
+        if self == .spark { return "GPT-5.3-Codex-Spark" }
+        if rawValue.localizedCaseInsensitiveContains("gpt") {
+            return rawValue.replacingOccurrences(of: "_", with: "-")
         }
+        return rawValue
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + String($0.dropFirst()) }
+            .joined(separator: " ")
+    }
+
+    public var sortKey: String {
+        if self == .general { return "0-\(rawValue)" }
+        if self == .spark { return "1-\(rawValue)" }
+        return "2-\(displayName)"
     }
 }
 
@@ -81,19 +110,42 @@ public struct RateLimitSnapshot: Codable, Equatable, Sendable {
     public let lastUpdated: Date
     public let sourceStatus: SourceStatus
     public let sourceDescription: String
+    public let planType: String?
+    public let rateLimitReachedType: String?
+    public let spendControl: SpendControlStatus?
 
     public init(
         buckets: [RateLimitBucket],
         credit: CreditStatus?,
         lastUpdated: Date,
         sourceStatus: SourceStatus,
-        sourceDescription: String
+        sourceDescription: String,
+        planType: String? = nil,
+        rateLimitReachedType: String? = nil,
+        spendControl: SpendControlStatus? = nil
     ) {
         self.buckets = buckets
         self.credit = credit
         self.lastUpdated = lastUpdated
         self.sourceStatus = sourceStatus
         self.sourceDescription = sourceDescription
+        self.planType = planType
+        self.rateLimitReachedType = rateLimitReachedType
+        self.spendControl = spendControl
+    }
+}
+
+public struct SpendControlStatus: Codable, Equatable, Sendable {
+    public let limit: String?
+    public let used: String?
+    public let remainingPercent: Double?
+    public let resetAt: Date?
+
+    public init(limit: String?, used: String?, remainingPercent: Double?, resetAt: Date?) {
+        self.limit = limit
+        self.used = used
+        self.remainingPercent = remainingPercent
+        self.resetAt = resetAt
     }
 }
 

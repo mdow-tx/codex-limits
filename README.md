@@ -5,13 +5,13 @@ Codex Limits is a small native macOS menu bar utility for watching Codex usage l
 It reads local Codex auth from Keychain or `~/.codex/auth.json`, calls Codex's structured usage endpoint, and shows:
 
 - the lowest active limit in the menu bar
-- 5-hour and weekly remaining percentages
+- 5-hour and weekly remaining percentages for General and any additional Codex metered limits
 - reset times
 - credit status
 - configurable refresh interval
 - local trend history with hoverable time-series charts
 - optional low-limit notifications
-- copyable debug diagnostics with no tokens or credentials
+- copyable debug diagnostics with no tokens or credentials, including plan/status metadata when Codex returns it
 
 The app does not use screenshots, OCR, or screen recording.
 

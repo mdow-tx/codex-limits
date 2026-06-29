@@ -26,7 +26,7 @@ public enum UsagePayloadParser {
                 continue
             }
             let rawLimitName = string(in: entry, keys: ["limitName", "limit_name", "model", "slug", "name"])
-            let group: RateLimitGroup = rawLimitName == RateLimitGroup.spark.rawValue ? .spark : .general
+            let group = group(from: rawLimitName)
             let bucketContainers = collectBucketObjects(from: entry)
             for bucket in bucketContainers {
                 guard let window = window(from: bucket) else { continue }
@@ -58,7 +58,10 @@ public enum UsagePayloadParser {
             credit: credit(from: json),
             lastUpdated: Date(),
             sourceStatus: sourceStatus,
-            sourceDescription: sourceDescription
+            sourceDescription: sourceDescription,
+            planType: planType(from: json),
+            rateLimitReachedType: rateLimitReachedType(from: json),
+            spendControl: spendControl(from: json)
         )
     }
 
@@ -69,7 +72,7 @@ public enum UsagePayloadParser {
         }
 
         let rawLimitName = string(in: object, keys: ["metered_limit_name", "meteredLimitName", "limit_name", "limitName"])
-        let group: RateLimitGroup = rawLimitName == RateLimitGroup.spark.rawValue ? .spark : .general
+        let group = group(from: rawLimitName)
         guard let details = unboxObject(object["rate_limits"] ?? object["rateLimits"]) else {
             return nil
         }
@@ -88,7 +91,8 @@ public enum UsagePayloadParser {
             credit: eventCredit(from: object["credits"] ?? object["credit"]),
             lastUpdated: Date(),
             sourceStatus: sourceStatus,
-            sourceDescription: sourceDescription
+            sourceDescription: sourceDescription,
+            planType: planType(from: object)
         )
     }
 
@@ -125,7 +129,7 @@ public enum UsagePayloadParser {
         if let additional = unboxArray(object["additional_rate_limits"]) {
             for entry in additional {
                 let feature = string(in: entry, keys: ["metered_feature", "meteredFeature", "limit_name", "limitName"])
-                let group: RateLimitGroup = feature == RateLimitGroup.spark.rawValue ? .spark : .general
+                let group = group(from: feature)
                 if let rateLimit = unboxObject(entry["rate_limit"]) {
                     buckets.append(contentsOf: backendBuckets(from: rateLimit, group: group))
                 }
@@ -138,7 +142,10 @@ public enum UsagePayloadParser {
             credit: backendCredit(from: object) ?? credit(from: object),
             lastUpdated: Date(),
             sourceStatus: sourceStatus,
-            sourceDescription: sourceDescription
+            sourceDescription: sourceDescription,
+            planType: planType(from: object),
+            rateLimitReachedType: rateLimitReachedType(from: object),
+            spendControl: spendControl(from: object)
         )
     }
 
@@ -231,7 +238,7 @@ public enum UsagePayloadParser {
         walk(json) { object in
             guard let window = window(from: object) else { return }
             let rawName = string(in: object, keys: ["limitName", "limit_name", "model", "slug", "name"])
-            let group: RateLimitGroup = rawName == RateLimitGroup.spark.rawValue ? .spark : .general
+            let group = group(from: rawName)
             let used = double(in: object, keys: ["usedPercent", "used_percent", "usagePercent", "usage_percent"])
             let remaining = double(in: object, keys: ["remainingPercent", "remaining", "remaining_percent"])
                 ?? used.map { max(0, min(100, 100 - $0)) }
@@ -271,6 +278,58 @@ public enum UsagePayloadParser {
             }
         }
         return found
+    }
+
+    private static func planType(from json: Any) -> String? {
+        var found: String?
+        walk(json) { object in
+            guard found == nil else { return }
+            found = string(in: object, keys: ["plan_type", "planType"])
+        }
+        return found
+    }
+
+    private static func rateLimitReachedType(from json: Any) -> String? {
+        var found: String?
+        walk(json) { object in
+            guard found == nil,
+                  let details = unboxObject(object["rate_limit_reached_type"] ?? object["rateLimitReachedType"]) else {
+                return
+            }
+            found = string(in: details, keys: ["type", "kind"])
+        }
+        return found
+    }
+
+    private static func spendControl(from json: Any) -> SpendControlStatus? {
+        var found: SpendControlStatus?
+        walk(json) { object in
+            guard found == nil,
+                  let details = unboxObject(object["spend_control"] ?? object["spendControl"]),
+                  let individual = unboxObject(details["individual_limit"] ?? details["individualLimit"]) else {
+                return
+            }
+            found = SpendControlStatus(
+                limit: string(in: individual, keys: ["limit"]),
+                used: string(in: individual, keys: ["used"]),
+                remainingPercent: double(in: individual, keys: ["remaining_percent", "remainingPercent"]),
+                resetAt: date(from: individual["reset_at"] ?? individual["resetAt"])
+            )
+        }
+        return found
+    }
+
+    private static func group(from rawValue: String?) -> RateLimitGroup {
+        guard let rawValue = rawValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+              !rawValue.isEmpty else {
+            return .general
+        }
+        if ["general", "codex", "core"].contains(rawValue) {
+            return .general
+        }
+        return RateLimitGroup(rawValue: rawValue)
     }
 
     private static func walk(_ value: Any, objectHandler: ([String: Any]) -> Void) {

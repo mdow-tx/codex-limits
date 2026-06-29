@@ -76,6 +76,49 @@ final class UsagePayloadParserTests: XCTestCase {
         XCTAssertEqual(snapshot.credit?.available, true)
     }
 
+    func testParsesArbitraryAdditionalRateLimitAndMetadata() throws {
+        let payload = """
+        {
+          "plan_type": "pro",
+          "rate_limit": {
+            "primary_window": {"used_percent": 5, "limit_window_seconds": 18000, "reset_at": 1770000000}
+          },
+          "additional_rate_limits": [
+            {
+              "metered_feature": "codex_bengalfox",
+              "limit_name": "gpt-5.2-codex-sonic",
+              "rate_limit": {
+                "primary_window": {"used_percent": 70, "limit_window_seconds": 18000, "reset_at": 1770000000}
+              }
+            }
+          ],
+          "spend_control": {
+            "individual_limit": {
+              "limit": "25000",
+              "used": "8000",
+              "remaining_percent": 68,
+              "reset_at": 1770500000
+            }
+          },
+          "rate_limit_reached_type": {"type": "workspace_member_credits_depleted"}
+        }
+        """
+        let snapshot = try UsagePayloadParser.parse(
+            data: Data(payload.utf8),
+            sourceStatus: .liveStructured,
+            sourceDescription: "backend"
+        )
+
+        XCTAssertEqual(snapshot.buckets.count, 2)
+        XCTAssertEqual(snapshot.buckets.first { $0.group == .general }?.remainingPercent, 95)
+        let custom = try XCTUnwrap(snapshot.buckets.first { $0.group.rawValue == "codex_bengalfox" })
+        XCTAssertEqual(custom.group.displayName, "Codex Bengalfox")
+        XCTAssertEqual(custom.remainingPercent, 30)
+        XCTAssertEqual(snapshot.planType, "pro")
+        XCTAssertEqual(snapshot.rateLimitReachedType, "workspace_member_credits_depleted")
+        XCTAssertEqual(snapshot.spendControl?.remainingPercent, 68)
+    }
+
     func testMalformedPayloadFails() {
         XCTAssertThrowsError(try UsagePayloadParser.parse(
             data: Data(#"{"hello":"world"}"#.utf8),

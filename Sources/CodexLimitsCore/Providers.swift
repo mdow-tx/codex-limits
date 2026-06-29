@@ -37,7 +37,10 @@ public struct ProviderChain: Sendable {
                 credit: cached.credit,
                 lastUpdated: cached.lastUpdated,
                 sourceStatus: .cachedStructured,
-                sourceDescription: "Last saved snapshot; refresh failed: \(errors.joined(separator: " | "))"
+                sourceDescription: "Last saved snapshot; refresh failed: \(errors.joined(separator: " | "))",
+                planType: cached.planType,
+                rateLimitReachedType: cached.rateLimitReachedType,
+                spendControl: cached.spendControl
             )
         }
         throw CodexUsageError.unavailable(errors.joined(separator: " | "))
