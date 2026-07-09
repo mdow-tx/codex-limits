@@ -63,11 +63,8 @@ public struct CodexStructuredProvider: CodexUsageProvider {
 
     public func fetchSnapshot() async throws -> RateLimitSnapshot {
         let auth = try CodexAuth.load(codexHome: codexHome)
-        guard auth.authMode == "chatgpt" else {
-            throw CodexUsageError.unavailable("Codex auth mode '\(auth.authMode ?? "unknown")' is not supported by the ChatGPT usage endpoint yet.")
-        }
         guard let accessToken = auth.tokens?.accessToken, !accessToken.isEmpty else {
-            throw CodexUsageError.unavailable("Codex auth file does not include a ChatGPT access token.")
+            throw CodexUsageError.unavailable("Codex does not have a ChatGPT access token available. Open Codex in the ChatGPT desktop app and sign in, then refresh.")
         }
 
         var request = URLRequest(url: endpoint)
@@ -79,19 +76,26 @@ public struct CodexStructuredProvider: CodexUsageProvider {
             request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await usageSession.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw CodexUsageError.unavailable("Codex usage endpoint returned a non-HTTP response.")
         }
         guard (200..<300).contains(http.statusCode) else {
-            let reason = String(data: data.prefix(800), encoding: .utf8) ?? "empty response"
-            throw CodexUsageError.unavailable("Codex usage endpoint returned HTTP \(http.statusCode): \(reason)")
+            throw CodexUsageError.unavailable("Codex usage endpoint returned HTTP \(http.statusCode).")
         }
         return try UsagePayloadParser.parse(
             data: data,
             sourceStatus: .liveStructured,
             sourceDescription: "Fetched Codex usage from \(endpoint.absoluteString)"
         )
+    }
+
+    private var usageSession: URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 20
+        return URLSession(configuration: configuration)
     }
 }
 
@@ -193,7 +197,11 @@ public struct CodexCachedStateProvider: CodexUsageProvider {
             home.appendingPathComponent("Library/Application Support/Codex/Local Storage/leveldb"),
             home.appendingPathComponent("Library/Application Support/Codex/Session Storage"),
             home.appendingPathComponent("Library/Application Support/Codex/Partitions/codex-browser-app/Local Storage/leveldb"),
-            home.appendingPathComponent("Library/Application Support/Codex/Partitions/codex-browser-app/Session Storage")
+            home.appendingPathComponent("Library/Application Support/Codex/Partitions/codex-browser-app/Session Storage"),
+            home.appendingPathComponent("Library/Application Support/ChatGPT/Local Storage/leveldb"),
+            home.appendingPathComponent("Library/Application Support/ChatGPT/Session Storage"),
+            home.appendingPathComponent("Library/Application Support/ChatGPT/Partitions/codex-browser-app/Local Storage/leveldb"),
+            home.appendingPathComponent("Library/Application Support/ChatGPT/Partitions/codex-browser-app/Session Storage")
         ]
     }
 
@@ -228,7 +236,11 @@ public struct CodexCachedStateProvider: CodexUsageProvider {
                 files.append(url)
             }
         }
-        return files
+        return files.sorted {
+            let left = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let right = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return left > right
+        }
     }
 }
 
@@ -244,9 +256,12 @@ public struct AccessibilityProvider: CodexUsageProvider {
             throw CodexUsageError.unavailable("Accessibility text permission is not granted. This reads UI labels only; it does not take screenshots or run OCR.")
         }
 
-        let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first
+        let app = ["com.openai.codex", "com.openai.chat"]
+            .lazy
+            .compactMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0).first }
+            .first
         guard let pid = app?.processIdentifier else {
-            throw CodexUsageError.unavailable("Codex is not running.")
+            throw CodexUsageError.unavailable("Codex is not running in the ChatGPT desktop app.")
         }
 
         let element = AXUIElementCreateApplication(pid)

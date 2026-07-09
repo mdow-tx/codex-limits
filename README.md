@@ -18,7 +18,7 @@ The app does not use screenshots, OCR, or screen recording.
 ## Requirements
 
 - macOS 14 or newer
-- A signed-in Codex installation
+- The ChatGPT desktop app for macOS, signed in to Codex. The separate Codex app icon is also supported where available.
 
 Xcode command line tools are only required if you build from source. They are not required when installing a prebuilt release app.
 
@@ -88,7 +88,7 @@ Local and GitHub release builds are ad hoc signed, so users may need to right-cl
 
 ## Privacy
 
-Codex Limits reads Codex auth from Keychain when available, falling back to `~/.codex/auth.json`, to make the same structured usage request that Codex uses. It does not store tokens or credentials. It only stores parsed, non-secret usage snapshots and local history under:
+Codex Limits reads Codex auth from Keychain when available, falling back to `~/.codex/auth.json`, to make the same structured usage request that Codex uses. This is shared with Codex in the ChatGPT desktop app. It does not store tokens or credentials. It only stores parsed, non-secret usage snapshots and local history under:
 
 ```text
 ~/Library/Application Support/Codex Limits/
