@@ -173,6 +173,9 @@ final class MenuBarModel: ObservableObject {
                 let balance = credit.balance.map { String(Int($0.rounded())) } ?? "unknown"
                 lines.append("Credit: \(credit.unlimited ? "unlimited" : balance)")
             }
+            if let resetCredits = snapshot.resetCredits {
+                lines.append("Usage resets available: \(resetCredits.availableCount)")
+            }
         }
         return lines.joined(separator: "\n")
     }
@@ -214,6 +217,10 @@ struct LimitsPanel: View {
                     if let credit = snapshot.credit {
                         Divider()
                         Label(creditText(credit), systemImage: "creditcard")
+                            .foregroundStyle(.secondary)
+                    }
+                    if let resetCredits = snapshot.resetCredits {
+                        Label(resetCreditText(resetCredits), systemImage: "arrow.counterclockwise.circle")
                             .foregroundStyle(.secondary)
                     }
                     Divider()
@@ -327,6 +334,10 @@ struct LimitsPanel: View {
             return "Credit: \(Int(balance.rounded())) remaining"
         }
         return credit.available ? "Credit: available" : "Credit: unavailable"
+    }
+
+    private func resetCreditText(_ resetCredits: RateLimitResetCreditStatus) -> String {
+        "Usage resets: \(resetCredits.availableCount) available"
     }
 
     private func groups(in snapshot: RateLimitSnapshot) -> [RateLimitGroup] {

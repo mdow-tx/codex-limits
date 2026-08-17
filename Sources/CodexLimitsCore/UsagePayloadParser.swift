@@ -56,6 +56,7 @@ public enum UsagePayloadParser {
         return RateLimitSnapshot(
             buckets: buckets.sorted { $0.id < $1.id },
             credit: credit(from: json),
+            resetCredits: resetCredits(from: json),
             lastUpdated: Date(),
             sourceStatus: sourceStatus,
             sourceDescription: sourceDescription,
@@ -79,16 +80,17 @@ public enum UsagePayloadParser {
 
         var buckets: [RateLimitBucket] = []
         if let primary = unboxObject(details["primary"]) {
-            buckets.append(eventBucket(from: primary, group: group, window: .fiveHour))
+            buckets.append(eventBucket(from: primary, group: group, fallbackWindow: .fiveHour))
         }
         if let secondary = unboxObject(details["secondary"]) {
-            buckets.append(eventBucket(from: secondary, group: group, window: .weekly))
+            buckets.append(eventBucket(from: secondary, group: group, fallbackWindow: .weekly))
         }
 
         guard !buckets.isEmpty else { return nil }
         return RateLimitSnapshot(
             buckets: deduplicated(buckets).sorted { $0.id < $1.id },
             credit: eventCredit(from: object["credits"] ?? object["credit"]),
+            resetCredits: resetCredits(from: object),
             lastUpdated: Date(),
             sourceStatus: sourceStatus,
             sourceDescription: sourceDescription,
@@ -96,8 +98,10 @@ public enum UsagePayloadParser {
         )
     }
 
-    private static func eventBucket(from windowObject: [String: Any], group: RateLimitGroup, window: RateLimitWindow) -> RateLimitBucket {
+    private static func eventBucket(from windowObject: [String: Any], group: RateLimitGroup, fallbackWindow: RateLimitWindow) -> RateLimitBucket {
         let used = double(in: windowObject, keys: ["used_percent", "usedPercent"])
+        let durationMins = int(in: windowObject, keys: ["window_minutes", "windowMinutes"])
+        let window = window(forDurationMins: durationMins, fallback: fallbackWindow)
         return RateLimitBucket(
             group: group,
             window: window,
@@ -106,7 +110,7 @@ public enum UsagePayloadParser {
             usedPercent: used,
             resetAt: date(from: windowObject["reset_at"] ?? windowObject["resetAt"]),
             resetLabel: nil,
-            windowDurationMins: int(in: windowObject, keys: ["window_minutes", "windowMinutes"])
+            windowDurationMins: durationMins
         )
     }
 
@@ -140,6 +144,7 @@ public enum UsagePayloadParser {
         return RateLimitSnapshot(
             buckets: deduplicated(buckets).sorted { $0.id < $1.id },
             credit: backendCredit(from: object) ?? credit(from: object),
+            resetCredits: resetCredits(from: object),
             lastUpdated: Date(),
             sourceStatus: sourceStatus,
             sourceDescription: sourceDescription,
@@ -152,18 +157,19 @@ public enum UsagePayloadParser {
     private static func backendBuckets(from rateLimit: [String: Any], group: RateLimitGroup) -> [RateLimitBucket] {
         var buckets: [RateLimitBucket] = []
         if let primary = unboxObject(rateLimit["primary_window"]) {
-            buckets.append(backendBucket(from: primary, group: group, window: .fiveHour))
+            buckets.append(backendBucket(from: primary, group: group, fallbackWindow: .fiveHour))
         }
         if let secondary = unboxObject(rateLimit["secondary_window"]) {
-            buckets.append(backendBucket(from: secondary, group: group, window: .weekly))
+            buckets.append(backendBucket(from: secondary, group: group, fallbackWindow: .weekly))
         }
         return buckets
     }
 
-    private static func backendBucket(from windowObject: [String: Any], group: RateLimitGroup, window: RateLimitWindow) -> RateLimitBucket {
+    private static func backendBucket(from windowObject: [String: Any], group: RateLimitGroup, fallbackWindow: RateLimitWindow) -> RateLimitBucket {
         let used = double(in: windowObject, keys: ["used_percent", "usedPercent"])
         let durationSeconds = int(in: windowObject, keys: ["limit_window_seconds", "limitWindowSeconds"])
         let durationMins = durationSeconds.map { max(1, ($0 + 59) / 60) }
+        let window = window(forDurationMins: durationMins, fallback: fallbackWindow)
         return RateLimitBucket(
             group: group,
             window: window,
@@ -267,6 +273,11 @@ public enum UsagePayloadParser {
         return nil
     }
 
+    private static func window(forDurationMins durationMins: Int?, fallback: RateLimitWindow) -> RateLimitWindow {
+        guard let durationMins else { return fallback }
+        return durationMins < 1_440 ? .fiveHour : .weekly
+    }
+
     private static func credit(from json: Any) -> CreditStatus? {
         var found: CreditStatus?
         walk(json) { object in
@@ -276,6 +287,19 @@ public enum UsagePayloadParser {
             } else if bool(in: object, keys: ["unlimited"]) == true {
                 found = CreditStatus(balance: nil, unlimited: true, available: true)
             }
+        }
+        return found
+    }
+
+    private static func resetCredits(from json: Any) -> RateLimitResetCreditStatus? {
+        var found: RateLimitResetCreditStatus?
+        walk(json) { object in
+            guard found == nil,
+                  let details = unboxObject(object["rate_limit_reset_credits"] ?? object["rateLimitResetCredits"]),
+                  let availableCount = int(in: details, keys: ["available_count", "availableCount"]) else {
+                return
+            }
+            found = RateLimitResetCreditStatus(availableCount: max(0, availableCount))
         }
         return found
     }

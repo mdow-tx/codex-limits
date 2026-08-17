@@ -104,9 +104,18 @@ public struct CreditStatus: Codable, Equatable, Sendable {
     }
 }
 
+public struct RateLimitResetCreditStatus: Codable, Equatable, Sendable {
+    public let availableCount: Int
+
+    public init(availableCount: Int) {
+        self.availableCount = availableCount
+    }
+}
+
 public struct RateLimitSnapshot: Codable, Equatable, Sendable {
     public let buckets: [RateLimitBucket]
     public let credit: CreditStatus?
+    public let resetCredits: RateLimitResetCreditStatus?
     public let lastUpdated: Date
     public let sourceStatus: SourceStatus
     public let sourceDescription: String
@@ -117,6 +126,7 @@ public struct RateLimitSnapshot: Codable, Equatable, Sendable {
     public init(
         buckets: [RateLimitBucket],
         credit: CreditStatus?,
+        resetCredits: RateLimitResetCreditStatus? = nil,
         lastUpdated: Date,
         sourceStatus: SourceStatus,
         sourceDescription: String,
@@ -126,6 +136,7 @@ public struct RateLimitSnapshot: Codable, Equatable, Sendable {
     ) {
         self.buckets = buckets
         self.credit = credit
+        self.resetCredits = resetCredits
         self.lastUpdated = lastUpdated
         self.sourceStatus = sourceStatus
         self.sourceDescription = sourceDescription

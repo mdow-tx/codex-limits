@@ -91,7 +91,7 @@ xattr -cr "$APP_DIR"
 xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
 xattr -d "com.apple.fileprovider.fpfs#P" "$APP_DIR" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_DIR"
-ditto -c -k --keepParent "$APP_DIR" "$ZIP"
+COPYFILE_DISABLE=1 ditto -c -k --norsrc --noextattr --keepParent "$APP_DIR" "$ZIP"
 
 echo "$APP_DIR"
 echo "$ZIP"

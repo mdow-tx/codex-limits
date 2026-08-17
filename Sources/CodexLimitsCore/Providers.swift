@@ -35,6 +35,7 @@ public struct ProviderChain: Sendable {
             return RateLimitSnapshot(
                 buckets: cached.buckets,
                 credit: cached.credit,
+                resetCredits: cached.resetCredits,
                 lastUpdated: cached.lastUpdated,
                 sourceStatus: .cachedStructured,
                 sourceDescription: "Last saved snapshot; refresh failed: \(errors.joined(separator: " | "))",

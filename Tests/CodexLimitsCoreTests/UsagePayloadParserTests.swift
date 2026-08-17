@@ -60,7 +60,8 @@ final class UsagePayloadParserTests: XCTestCase {
             "primary": {"used_percent": 12.5, "window_minutes": 300, "reset_at": 1770000000},
             "secondary": {"used_percent": 40, "window_minutes": 10080, "reset_at": 1770500000}
           },
-          "credits": {"has_credits": true, "unlimited": false, "balance": "9"}
+          "credits": {"has_credits": true, "unlimited": false, "balance": "9"},
+          "rate_limit_reset_credits": {"available_count": 2}
         }
         """
         let snapshot = try UsagePayloadParser.parse(
@@ -74,6 +75,69 @@ final class UsagePayloadParserTests: XCTestCase {
         XCTAssertEqual(snapshot.buckets.first { $0.window == .weekly }?.windowDurationMins, 10080)
         XCTAssertEqual(snapshot.credit?.balance, 9)
         XCTAssertEqual(snapshot.credit?.available, true)
+        XCTAssertEqual(snapshot.resetCredits?.availableCount, 2)
+    }
+
+    func testParsesResetCreditSummaryFromBackendPayload() throws {
+        let payload = """
+        {
+          "rate_limit": {
+            "primary_window": {"used_percent": 12, "limit_window_seconds": 18000}
+          },
+          "rate_limit_reset_credits": {"available_count": 1}
+        }
+        """
+
+        let snapshot = try UsagePayloadParser.parse(
+            data: Data(payload.utf8),
+            sourceStatus: .liveStructured,
+            sourceDescription: "backend"
+        )
+
+        XCTAssertEqual(snapshot.resetCredits, RateLimitResetCreditStatus(availableCount: 1))
+    }
+
+    func testClassifiesBackendPrimaryWindowByDuration() throws {
+        let payload = """
+        {
+          "rate_limit": {
+            "primary_window": {"used_percent": 21, "limit_window_seconds": 604800}
+          }
+        }
+        """
+
+        let snapshot = try UsagePayloadParser.parse(
+            data: Data(payload.utf8),
+            sourceStatus: .liveStructured,
+            sourceDescription: "backend"
+        )
+
+        XCTAssertEqual(snapshot.buckets.count, 1)
+        XCTAssertEqual(snapshot.buckets[0].window, .weekly)
+        XCTAssertEqual(snapshot.buckets[0].label, "Weekly usage limit")
+        XCTAssertEqual(snapshot.buckets[0].windowDurationMins, 10080)
+    }
+
+    func testClassifiesEventPrimaryWindowByDuration() throws {
+        let payload = """
+        {
+          "type": "codex.rate_limits",
+          "metered_limit_name": "codex",
+          "rate_limits": {
+            "primary": {"used_percent": 21, "window_minutes": 10080}
+          }
+        }
+        """
+
+        let snapshot = try UsagePayloadParser.parse(
+            data: Data(payload.utf8),
+            sourceStatus: .cachedStructured,
+            sourceDescription: "event"
+        )
+
+        XCTAssertEqual(snapshot.buckets.count, 1)
+        XCTAssertEqual(snapshot.buckets[0].window, .weekly)
+        XCTAssertEqual(snapshot.buckets[0].label, "Weekly usage limit")
     }
 
     func testParsesArbitraryAdditionalRateLimitAndMetadata() throws {

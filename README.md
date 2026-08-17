@@ -8,6 +8,7 @@ It reads local Codex auth from Keychain or `~/.codex/auth.json`, calls Codex's s
 - 5-hour and weekly remaining percentages for General and any additional Codex metered limits
 - reset times
 - credit status
+- available rate-limit reset credits
 - configurable refresh interval
 - local trend history with hoverable time-series charts
 - optional low-limit notifications
