@@ -7,7 +7,6 @@ APP_DIR="$DIST/Codex Limits.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
-ICONSET="$ROOT/.build/CodexLimits.iconset"
 ICNS="$RESOURCES/AppIcon.icns"
 ZIP="$DIST/Codex Limits.zip"
 
@@ -17,21 +16,20 @@ export XDG_CACHE_HOME="$ROOT/.build/XDGCache"
 
 swift build -c release --disable-sandbox
 
-rm -rf "$APP_DIR" "$ICONSET" "$ZIP"
-mkdir -p "$MACOS" "$RESOURCES" "$ICONSET"
+rm -rf "$APP_DIR" "$ZIP"
+mkdir -p "$MACOS" "$RESOURCES"
 cp "$ROOT/.build/release/Codex Limits" "$MACOS/Codex Limits"
 cp "$ROOT/Sources/CodexLimitsApp/Info.plist" "$CONTENTS/Info.plist"
 
-python3 - "$ICONSET" <<'PY'
+python3 - "$ICNS" <<'PY'
 from pathlib import Path
 import struct
 import zlib
 import sys
 
 out = Path(sys.argv[1])
-sizes = [16, 32, 128, 256, 512]
 
-def png_rgba(path, width, height, pixels):
+def png_rgba(width, height, pixels):
     raw = b''.join(b'\x00' + pixels[y * width * 4:(y + 1) * width * 4] for y in range(height))
     def chunk(kind, data):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
@@ -39,7 +37,7 @@ def png_rgba(path, width, height, pixels):
     data += chunk(b'IHDR', struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
     data += chunk(b'IDAT', zlib.compress(raw, 9))
     data += chunk(b'IEND', b'')
-    path.write_bytes(data)
+    return data
 
 def draw(size):
     pixels = bytearray()
@@ -63,23 +61,28 @@ def draw(size):
             if d > radius * 0.72 and y < center and dx > 0:
                 r, g, b = 245, 195, 74
             pixels += bytes([r, g, b, a])
-    return pixels
+    return bytes(pixels)
 
-for size in sizes:
-    pixels = draw(size)
-    name = f"icon_{size}x{size}.png"
-    png_rgba(out / name, size, size, pixels)
-    if size <= 512:
-        double_size = size * 2
-        png_rgba(out / f"icon_{size}x{size}@2x.png", double_size, double_size, draw(double_size))
+representations = [
+    (b'icp4', 16),
+    (b'icp5', 32),
+    (b'icp6', 64),
+    (b'ic07', 128),
+    (b'ic08', 256),
+    (b'ic09', 512),
+    (b'ic10', 1024),
+]
+chunks = []
+for kind, size in representations:
+    png = png_rgba(size, size, draw(size))
+    chunks.append(kind + struct.pack(">I", len(png) + 8) + png)
+
+payload = b''.join(chunks)
+out.write_bytes(b'icns' + struct.pack(">I", len(payload) + 8) + payload)
 PY
 
-if iconutil -c icns "$ICONSET" -o "$ICNS"; then
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$CONTENTS/Info.plist" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$CONTENTS/Info.plist"
-else
-  echo "warning: could not generate AppIcon.icns; packaging without a custom icon" >&2
-fi
+/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$CONTENTS/Info.plist" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName Codex Limits" "$CONTENTS/Info.plist" 2>/dev/null \
   || /usr/libexec/PlistBuddy -c "Add :CFBundleName string Codex Limits" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundlePackageType APPL" "$CONTENTS/Info.plist" 2>/dev/null \
