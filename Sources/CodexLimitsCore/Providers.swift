@@ -22,16 +22,26 @@ public struct ProviderChain: Sendable {
 
     public func fetchSnapshot() async throws -> RateLimitSnapshot {
         var errors: [String] = []
+        var fallback: RateLimitSnapshot?
         for provider in providers {
             do {
                 let snapshot = try await provider.fetchSnapshot()
-                try? store.save(snapshot)
-                return snapshot
+                if snapshot.sourceStatus == .liveStructured {
+                    try? store.save(snapshot)
+                    return snapshot
+                }
+                if fallback == nil || snapshot.lastUpdated > fallback!.lastUpdated {
+                    fallback = snapshot
+                }
             } catch {
                 errors.append("\(provider.name): \(error.localizedDescription)")
             }
         }
-        if let cached = try? store.load() {
+        if let saved = try? store.load(),
+           fallback == nil || saved.lastUpdated >= fallback!.lastUpdated {
+            fallback = saved
+        }
+        if let cached = fallback {
             return RateLimitSnapshot(
                 buckets: cached.buckets,
                 credit: cached.credit,
@@ -91,13 +101,15 @@ public struct CodexStructuredProvider: CodexUsageProvider {
         )
     }
 
-    private var usageSession: URLSession {
+    private static let sharedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 20
         return URLSession(configuration: configuration)
-    }
+    }()
+
+    private var usageSession: URLSession { Self.sharedSession }
 }
 
 struct CodexAuth: Decodable {
@@ -208,18 +220,32 @@ public struct CodexCachedStateProvider: CodexUsageProvider {
 
     public func fetchSnapshot() async throws -> RateLimitSnapshot {
         let files = Self.candidateFiles(roots: roots)
-        for url in files {
-            guard let data = try? Data(contentsOf: url), data.count < 20_000_000 else { continue }
+        var newest: RateLimitSnapshot?
+        var remainingBudget = 20_000_000
+        for url in files.prefix(100) {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let size = values.fileSize, size > 0, size <= remainingBudget else { continue }
+            remainingBudget -= size
+            guard let handle = try? FileHandle(forReadingFrom: url) else { continue }
+            let data = try? handle.read(upToCount: size + 1)
+            try? handle.close()
+            guard let data, data.count <= size else { continue }
             for candidate in JSONCandidateExtractor.extractCandidates(from: data) {
-                if let snapshot = try? UsagePayloadParser.parse(
+                if var snapshot = try? UsagePayloadParser.parse(
                     data: candidate,
                     sourceStatus: .cachedStructured,
                     sourceDescription: "Parsed cached Codex state from \(url.path)"
                 ) {
-                    return snapshot
+                    // File modification is only an upper bound on payload freshness.
+                    snapshot.lastUpdated = min(values.contentModificationDate ?? .distantPast, Date())
+                    if newest == nil || snapshot.lastUpdated > newest!.lastUpdated {
+                        newest = snapshot
+                    }
+                    break
                 }
             }
         }
+        if let newest { return newest }
         throw CodexUsageError.unavailable("No cached structured usage payload found in Codex storage.")
     }
 
@@ -228,7 +254,7 @@ public struct CodexCachedStateProvider: CodexUsageProvider {
         for root in roots {
             guard let enumerator = FileManager.default.enumerator(
                 at: root,
-                includingPropertiesForKeys: [.isRegularFileKey],
+                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
                 options: [.skipsHiddenFiles]
             ) else { continue }
 

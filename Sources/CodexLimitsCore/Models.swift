@@ -116,7 +116,7 @@ public struct RateLimitSnapshot: Codable, Equatable, Sendable {
     public let buckets: [RateLimitBucket]
     public let credit: CreditStatus?
     public let resetCredits: RateLimitResetCreditStatus?
-    public let lastUpdated: Date
+    public var lastUpdated: Date
     public let sourceStatus: SourceStatus
     public let sourceDescription: String
     public let planType: String?

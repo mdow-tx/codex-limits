@@ -11,10 +11,6 @@ struct CodexLimitsMenuBarApp: App {
     var body: some Scene {
         MenuBarExtra(model.menuTitle) {
             LimitsPanel(model: model)
-                .task {
-                    await model.refresh()
-                    model.startTimer()
-                }
         }
         .menuBarExtraStyle(.window)
     }
@@ -42,8 +38,9 @@ enum RefreshInterval: Int, CaseIterable, Identifiable {
 final class MenuBarModel: ObservableObject {
     @Published var snapshot: RateLimitSnapshot?
     @Published var history: [RateLimitSnapshot] = []
+    @Published var series: [String: [LimitHistoryPoint]] = [:]
     @Published var errorMessage: String?
-    @Published var isRefreshing = false
+    @Published var isRefreshing = true
     @Published var notificationsEnabled: Bool
     @Published var refreshInterval: RefreshInterval
 
@@ -56,11 +53,22 @@ final class MenuBarModel: ObservableObject {
     private var timer: Timer?
 
     init() {
-        snapshot = try? store.load()
-        history = (try? historyStore.load()) ?? []
         notificationsEnabled = UserDefaults.standard.bool(forKey: notificationsKey)
         let savedInterval = UserDefaults.standard.integer(forKey: refreshIntervalKey)
         refreshInterval = RefreshInterval(rawValue: savedInterval) ?? .five
+        Task {
+            let store = self.store
+            let historyStore = self.historyStore
+            let loaded = await Task.detached {
+                (try? store.load(), (try? historyStore.load()) ?? [])
+            }.value
+            snapshot = loaded.0
+            history = loaded.1
+            rebuildSeries()
+            isRefreshing = false
+            startTimer()
+            await refresh()
+        }
     }
 
     func startTimer() {
@@ -73,23 +81,44 @@ final class MenuBarModel: ObservableObject {
     }
 
     func refresh() async {
+        guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
         do {
             let next = try await chain.fetchSnapshot()
             snapshot = next
-            try? historyStore.append(next)
-            history = (try? historyStore.load()) ?? [next]
+            guard next.sourceStatus == .liveStructured else {
+                errorMessage = next.sourceDescription
+                return
+            }
+            history.append(next)
+            history = Array(history.suffix(historyStore.maxEntries))
+            rebuildSeries()
+            let savedHistory = history
+            let historyStore = self.historyStore
+            try await Task.detached { try historyStore.save(savedHistory) }.value
             errorMessage = nil
             if notificationsEnabled {
                 await notifier.sendNotificationsIfNeeded(for: next)
             }
         } catch {
             errorMessage = error.localizedDescription
-            if snapshot == nil {
-                snapshot = try? store.load()
+        }
+    }
+
+    private func rebuildSeries() {
+        var result: [String: [LimitHistoryPoint]] = [:]
+        for snapshot in history.sorted(by: { $0.lastUpdated < $1.lastUpdated }) {
+            for bucket in snapshot.buckets {
+                guard let remaining = bucket.remainingPercent else { continue }
+                let point = LimitHistoryPoint(date: snapshot.lastUpdated, remainingPercent: remaining)
+                if result[bucket.id]?.last?.date == point.date {
+                    result[bucket.id]?.removeLast()
+                }
+                result[bucket.id, default: []].append(point)
             }
         }
+        series = result
     }
 
     func setRefreshInterval(_ interval: RefreshInterval) {
@@ -114,7 +143,7 @@ final class MenuBarModel: ObservableObject {
 
     var isStale: Bool {
         guard let snapshot else { return false }
-        return Date().timeIntervalSince(snapshot.lastUpdated) > 30 * 60
+        return snapshot.sourceStatus != .liveStructured || Date().timeIntervalSince(snapshot.lastUpdated) > 30 * 60
     }
 
     var versionText: String {
@@ -210,7 +239,7 @@ struct LimitsPanel: View {
                     ForEach(groups(in: snapshot), id: \.self) { group in
                         let rows = snapshot.buckets.filter { $0.group == group }
                         if !rows.isEmpty {
-                            LimitGroupSection(group: group, buckets: rows, history: model.history)
+                            LimitGroupSection(group: group, buckets: rows, series: model.series)
                         }
                     }
 
@@ -349,7 +378,7 @@ struct LimitsPanel: View {
 struct LimitGroupSection: View {
     let group: RateLimitGroup
     let buckets: [RateLimitBucket]
-    let history: [RateLimitSnapshot]
+    let series: [String: [LimitHistoryPoint]]
     @State private var showsTrends = false
 
     var body: some View {
@@ -383,13 +412,7 @@ struct LimitGroupSection: View {
     }
 
     private func points(for bucket: RateLimitBucket) -> [LimitHistoryPoint] {
-        history.compactMap { snapshot in
-            guard let match = snapshot.buckets.first(where: { $0.id == bucket.id }),
-                  let remaining = match.remainingPercent else {
-                return nil
-            }
-            return LimitHistoryPoint(date: snapshot.lastUpdated, remainingPercent: remaining)
-        }
+        series[bucket.id] ?? []
     }
 }
 
@@ -451,7 +474,7 @@ struct LimitBucketRow: View {
     }
 
     private var deltaText: String {
-        let orderedPoints = historyPoints.sorted { $0.date < $1.date }
+        let orderedPoints = historyPoints
         guard let latest = orderedPoints.last else {
             return ""
         }
@@ -459,8 +482,7 @@ struct LimitBucketRow: View {
         let oneHourAgo = latest.date.addingTimeInterval(-60 * 60)
         guard let baseline = orderedPoints
             .dropLast()
-            .filter({ $0.date <= oneHourAgo })
-            .last else {
+            .last(where: { $0.date <= oneHourAgo }) else {
             return ""
         }
 
@@ -481,7 +503,7 @@ struct LimitBucketRow: View {
 }
 
 struct LimitHistoryPoint: Identifiable {
-    let id = UUID()
+    var id: Date { date }
     let date: Date
     let remainingPercent: Double
 }
@@ -568,9 +590,18 @@ struct LimitHistoryChart: View {
         let origin = geometry[plotFrame].origin
         let x = location.x - origin.x
         guard let hoveredDate: Date = proxy.value(atX: x) else { return nil }
-        return points.min { lhs, rhs in
-            abs(lhs.date.timeIntervalSince(hoveredDate)) < abs(rhs.date.timeIntervalSince(hoveredDate))
+        guard !points.isEmpty else { return nil }
+        var low = 0
+        var high = points.count
+        while low < high {
+            let mid = (low + high) / 2
+            if points[mid].date < hoveredDate { low = mid + 1 }
+            else { high = mid }
         }
+        if low == 0 { return points.first }
+        if low == points.count { return points.last }
+        return hoveredDate.timeIntervalSince(points[low - 1].date) < points[low].date.timeIntervalSince(hoveredDate)
+            ? points[low - 1] : points[low]
     }
 }
 

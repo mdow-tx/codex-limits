@@ -30,11 +30,17 @@ public struct SnapshotHistoryStore: Sendable {
         if history.count > maxEntries {
             history = Array(history.suffix(maxEntries))
         }
+        try save(history)
+    }
+
+    public func save(_ history: [RateLimitSnapshot]) throws {
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let data = try JSONEncoder.codexLimits.encode(history)
+        let encoder = JSONEncoder.codexLimits
+        encoder.outputFormatting = []
+        let data = try encoder.encode(Array(history.suffix(maxEntries)))
         try data.write(to: fileURL, options: [.atomic])
     }
 }
